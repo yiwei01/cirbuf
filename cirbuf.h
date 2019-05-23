@@ -2,6 +2,7 @@
 #define CIRBUF_H
 
 #include <assert.h>
+#include <errno.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <sys/mman.h>
@@ -21,24 +22,40 @@ static void create_buffer_mirror(cirbuf_t *cb)
 {
     char path[] = "/tmp/cirbuf-XXXXXX";
     int fd = mkstemp(path);
-    unlink(path);
-    ftruncate(fd, cb->size);
-    /* FIXME: validate if mkstemp, unlink, ftruncate failed */
+    if (fd == -1 || unlink(path) || ftruncate(fd, cb->size)) {
+        if (-1 != fd) {
+            close(fd);
+        }
+        return;
+    }
 
     /* create the array of data */
     cb->data = mmap(NULL, cb->size << 1, PROT_NONE, MAP_ANONYMOUS | MAP_PRIVATE,
                     -1, 0);
-    /* FIXME: validate if cb->data != MAP_FAILED */
+    if (cb->data == MAP_FAILED) {
+        close(fd);
+        return;
+    }
 
-    void *address = mmap(cb->data, cb->size, PROT_READ | PROT_WRITE,
-                         MAP_FIXED | MAP_SHARED, fd, 0);
-    /* FIXME: validate if address == cb->data */
+    void *address_start = mmap(cb->data, cb->size, PROT_READ | PROT_WRITE,
+                               MAP_FIXED | MAP_SHARED, fd, 0);
+    if (cb->data != address_start) {
+        munmap(cb->data, cb->size << 1);
+        close(fd);
+        return;
+    }
 
-    address = mmap(cb->data + cb->size, cb->size, PROT_READ | PROT_WRITE,
-                   MAP_FIXED | MAP_SHARED, fd, 0);
-    /* FIXME: validate if address == cb->data + cb->size */
+    void *address_half =
+        mmap(cb->data + cb->size, cb->size, PROT_READ | PROT_WRITE,
+             MAP_FIXED | MAP_SHARED, fd, 0);
+    if (address_half != cb->data + cb->size) {
+        munmap(cb->data, cb->size << 1);
+        close(fd);
+        return;
+    }
 
     close(fd);
+    return;
 }
 
 /** Create new circular buffer.
@@ -49,7 +66,12 @@ static inline void cirbuf_new(cirbuf_t *dst, const unsigned long int size)
 {
     dst->size = size;
     dst->head = dst->tail = 0;
+    assert(!errno);
     create_buffer_mirror(dst);
+    if (errno) {
+        printf("Fail to create buffer mirror\n");
+        errno = 0;
+    }
 }
 
 /** Free memory used by circular buffer
