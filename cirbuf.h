@@ -5,6 +5,7 @@
 #include <errno.h>
 #include <stdbool.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/mman.h>
 #include <unistd.h>
 
@@ -106,7 +107,9 @@ static inline int cirbuf_offer(cirbuf_t *cb,
     written = size < written ? size : written;
     memcpy(cb->data + cb->tail, data, written);
     cb->tail += written;
-    /* TODO: add your code here */
+    if (cb->size < cb->tail) {
+        cb->tail %= cb->size;
+    }
     return written;
 }
 
